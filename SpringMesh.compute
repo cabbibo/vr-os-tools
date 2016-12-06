@@ -1,0 +1,219 @@
+﻿#pragma kernel CSMain
+ 
+#define threadX 10
+#define threadY 10
+#define threadZ 10
+
+#define strideX 10
+#define strideY 10
+#define strideZ 10
+
+#define gridX (threadX * strideX)
+#define gridY (threadY * strideY)
+#define gridZ (threadZ * strideZ)
+
+ 
+//Shaping Factors;
+#define _LengthOfConnectionSprings       0.0001
+#define _ConnectionSpringStrength        .3
+#define _MaxVel                          3.5
+#define _MaxForce                        3.2
+#define _ForceMultiplier                 0.01
+
+#define _Dampening                       .99
+#define _HandRepelRadius                 10.0
+#define _HandRepelStrength               10.5
+
+#define _ReturnSpringStrength            1
+
+
+
+//low level
+float _Time;
+float _Delta;
+float _StartTime;
+
+
+
+int _NumberHands;
+int _Set;
+
+struct Vert{
+
+  float3 pos;
+  float3 nor;
+  float3 vel;
+  float3 col;
+  float2 uv;
+
+  // should always be defined by righthand rule
+  float id;
+  float id1;
+  float id2;
+
+  float3 debug;
+  // x = state
+  
+};
+
+
+struct Anchor{
+  float3 pos;
+  float3 nor;
+  float3 tang;
+  float3 col;
+  float2 uv;
+  float id;
+  float triID;
+  float used;
+};
+
+struct Head{
+
+  float4x4 localToWorld;
+  float4x4 worldToLocal;
+  float3 pos;
+  float3 debug;
+
+};
+
+struct Hand{
+
+  float4x4 localToWorld;
+  float4x4 worldToLocal;
+  float3 pos;
+  float3 vel;
+  float trigger;
+  float3 debug;
+
+};
+
+struct Human{
+
+  Head head;
+  Hand hand1;
+  Hand hand2;
+
+};
+
+int _NumberHumans;
+int _IgnoreHead;
+
+
+
+float3 springForce( float3 p1 , float3 p2 , float d ){
+
+  float3 dir = p1 - p2;
+  float l = length( dir );
+
+  // no infinity
+  if( l >= .00000001 ){
+
+    dir = normalize( dir );
+    float dif = l - d;
+    return dif * dif * float(sign(dif)) * -dir;
+
+  }else{
+    
+    return float3(0,0,0);
+  
+  }
+
+}
+
+
+
+RWStructuredBuffer<Vert> vertBuffer;
+RWStructuredBuffer<Anchor> anchorBuffer;
+RWStructuredBuffer<Human> humanBuffer;
+RWStructuredBuffer<float4x4> transBuffer;
+
+
+
+float rand(float2 co){
+  return frac(sin(dot(co.xy ,float2(12.9898,78.233))) * 43758.5453);
+}
+
+
+// If 
+
+[numthreads(threadX,threadY,threadZ)]
+void CSMain (uint3 id : SV_DispatchThreadID) {
+  
+  int pID = id.x + id.y * gridX + id.z * gridX * gridY;
+
+  Vert vert = vertBuffer[pID];
+  Anchor anchor = anchorBuffer[pID];
+
+  float3 fAnchorPos = mul( transBuffer[0] , float4(anchor.pos,1)).xyz;
+
+  if( _Set == 0 ){
+
+
+    float3 force = float3( 0,0,0);
+
+
+    force += springForce( vert.pos , fAnchorPos ,  0 ) * .8;
+
+    for( int i = 0; i < _NumberHumans; i++){
+      
+      Human h = humanBuffer[i];
+
+      float3 d;
+
+
+      d = h.head.pos - vert.pos;
+      
+      // no infinity
+      if( length( d ) < 1 && length( d) > .000001){
+        force -= normalize( d )* (1-length(d));
+      }
+
+      d = h.hand1.pos - vert.pos;
+
+      // no infinity
+      if( length( d ) < 1 && length( d) > .000001 ){
+        force -= normalize( d )*(1-length(d));
+      }
+      
+
+      d = h.hand2.pos - vert.pos;
+
+      // no infinity
+      if(length( d ) < 1 && length( d) > .000001){
+        force -= normalize( d )* (1-length(d));
+      }
+      
+      
+
+
+    } 
+
+    vert.nor  = anchor.nor;
+    vert.col  = anchor.col;
+    vert.uv   = anchor.uv;
+
+    // Limit Force;
+    if( length( force ) > _MaxForce ){ force = normalize( force )* _MaxForce; }
+    vert.vel += force * _ForceMultiplier;
+    
+    // Limit Velocity
+    if( length( vert.vel ) > _MaxVel ){ vert.vel = normalize( vert.vel )* _MaxVel; }
+
+    vert.vel *= _Dampening;
+    vert.pos += vert.vel;
+
+
+  }else{
+
+    vert.pos  = fAnchorPos * .9;
+    vert.vel  = float3( 0,0,0);
+    vert.nor  = anchor.nor;
+    vert.col  = anchor.col;
+    vert.uv   = anchor.uv;
+
+  }
+
+  vertBuffer[pID] = vert;
+
+}
