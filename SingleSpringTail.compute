@@ -1,0 +1,280 @@
+#pragma kernel CSMain
+ 
+#define threadX 8
+#define threadY 8
+#define threadZ 8
+
+
+
+int _StrideX;
+int _StrideY;
+int _StrideZ;
+
+int _Sides;
+int _NumberTransforms;
+
+int _Set;
+
+float _Time;
+//float3 _Hand1;
+//float3 _Hand2;
+int _NumberHumans;
+float _ScaleDown;
+float _Gooeyness;
+
+
+#define gridX (threadX * _StrideX)
+#define gridY (threadY * _StrideY)
+#define gridZ (threadZ * _StrideZ)
+
+struct Vertebrae{
+  float id;
+  float4x4 localToWorld; 
+};
+
+struct Vert{
+
+  float3 pos;
+  float3 norm;
+  float3 tan;
+  float3 color;
+  float2 uv;
+  float id;
+  
+};
+
+struct SpringVert{
+
+  float3 pos;
+  float3 ogPos;
+  float3 vel;
+  float3 norm;
+  float3 tan;
+  float3 color;
+  float2 uv;
+  float id;
+  
+};
+
+struct Head{
+
+  float4x4 localToWorld;
+  float4x4 worldToLocal;
+  float3 pos;
+  float3 debug;
+
+};
+
+struct Hand{
+
+  float4x4 localToWorld;
+  float4x4 worldToLocal;
+  float3 pos;
+  float3 vel;
+  float trigger;
+  float3 debug;
+
+};
+
+struct Human{
+
+  Head head;
+  Hand hand1;
+  Hand hand2;
+
+};
+
+
+
+float3 springForce( float3 p1 , float3 p2 , float d ){
+
+  float3 dir = p1 - p2;
+  float l = length( dir );
+  dir = normalize( dir );
+
+  if( l < .00001 ){
+    return float3( 0,0,0);
+  }else{
+
+    float dif = l - d;
+
+    return dif * dif * float(sign(dif)) * -dir;
+  }
+
+}
+
+
+RWStructuredBuffer<SpringVert> vertBuffer;
+RWStructuredBuffer<Vertebrae> vertebraeBuffer;
+RWStructuredBuffer<Human> humanBuffer;
+
+
+[numthreads(threadX,threadY,threadZ)]
+void CSMain (uint3 id : SV_DispatchThreadID) 
+{
+
+
+
+  int pID = id.x + id.y * gridX + id.z * gridX * gridY;
+
+  uint vertebraeID = floor( pID / (_Sides * 3 * 2 ) );
+  SpringVert vert = vertBuffer[pID];
+
+
+  
+
+
+
+  if( vertebraeID < _NumberTransforms-1 ){
+
+    uint vertID = pID % (_Sides * 3 * 2 );
+    uint triID = pID % 6;
+    uint sideID = floor( vertID / 6);
+
+    float normalizedSideVal = float( sideID ) / 6;
+    float normalizedVertebraeVal = float( vertebraeID ) / _NumberTransforms;
+    
+    Vertebrae vertebrae1 = vertebraeBuffer[vertebraeID];
+    Vertebrae vertebrae2 = vertebraeBuffer[vertebraeID+1];
+
+
+
+    float3 fPos;
+    float3 fNorm;
+    float2 fUV;
+
+    float3 x1 = mul( vertebrae1.localToWorld, float4( 0,0,1,0)).xyz;
+    float3 x2 = mul( vertebrae2.localToWorld, float4( 0,0,1,0)).xyz;
+
+    float3 y1 = mul( vertebrae1.localToWorld, float4( 0,1,0,0)).xyz;
+    float3 y2 = mul( vertebrae2.localToWorld, float4( 0,1,0,0)).xyz;
+
+    float3 c1 = mul( vertebrae1.localToWorld, float4( 0,0,0,1)).xyz;
+    float3 c2 = mul( vertebrae2.localToWorld, float4( 0,0,0,1)).xyz;
+
+
+
+    float dSide = ( 1 /float(_Sides));
+    float dVert = ( 1 /float(_NumberTransforms));
+
+    float t = normalizedSideVal * 2 * 3.14159;
+    float tU = (normalizedSideVal + dSide) * 2 * 3.14159;
+
+    float v1 =normalizedVertebraeVal;
+    float v2 =normalizedVertebraeVal+dVert;
+    float r1 = sin( v1 * 50 ) + 3;
+    float r2 = sin( v2  * 50 ) + 3;
+
+    r1 *= .5 * (1-v1);
+    r2 *= .5 * (1-v2);
+
+    float3 p1 = c1 +  r1 * (cos( t )  * x1 + sin( t ) * y1 );
+    float3 p2 = c1 +  r1 * (cos( tU )  * x1 + sin( tU ) * y1 );
+
+    float3 p3 = c2 +  r2 * (cos( t )  * x2 + sin( t ) * y2 );
+    float3 p4 = c2 +  r2 * (cos( tU ) * x2 + sin( tU ) * y2 );
+
+    float3 n1 = cross( normalize( p4 - p2 ) , normalize( p1 - p2 ));
+    float3 n2 = cross( normalize( p4 - p3 ) , normalize( p1 - p3 ));
+
+    if( triID == 0){
+      fPos = p1;
+      fUV = float2( normalizedSideVal , normalizedVertebraeVal );
+      fNorm = n1;
+    }else if( triID == 1 ){
+      fPos = p2;
+      fUV = float2( normalizedSideVal + dSide , normalizedVertebraeVal );
+      fNorm = n1;
+    }else if( triID == 2 ){
+      fPos = p4;
+      fUV = float2( normalizedSideVal + dSide , normalizedVertebraeVal + dVert );
+      fNorm = n1;
+    }else if( triID == 3 ){
+      fPos = p4;
+      fUV = float2( normalizedSideVal + dSide , normalizedVertebraeVal + dVert );
+      fNorm = n2;
+    }else if( triID == 4 ){
+      fPos = p3;
+      fUV = float2( normalizedSideVal , normalizedVertebraeVal + dVert );
+      fNorm = n2;
+    }else if( triID == 5 ){
+      fPos = p1;
+      fUV = float2( normalizedSideVal , normalizedVertebraeVal );
+      fNorm = n2;
+    }
+
+
+
+    if( _Set == 0 ){
+      
+      
+      vert.norm = fNorm;
+      vert.uv = fUV;
+      //vert.pos = fPos;
+
+      
+
+
+      float3 force = float3( 0 ,0,0);
+
+      force += springForce( vert.pos , fPos ,0) * .1 * ((1-_Gooeyness)+.05);
+
+      for( int i =0; i < _NumberHumans; i++ ){
+    
+        Human h = humanBuffer[i];
+
+        float3 dif = h.hand1.pos - vert.pos;
+
+      
+        if( length( dif ) < .3 && length( dif ) > 0  ){
+            
+            force += dif * .04;
+
+        }
+
+        dif = h.hand2.pos - vert.pos;
+
+        // checks to make sure its not the same hand!
+        //if( length(h.hand2.pos - _HandPos) > .1){
+        if( length( dif ) < .3  ){
+            
+            //force += dif;
+
+        }
+
+       }
+
+/*      float3 dif = vert.pos - _Hand1;
+      if( length(dif) < .3 ){
+        force += (.3-length(dif )) * normalize( dif )* .04;
+      }
+
+      dif = vert.pos - _Hand2;
+      if( length(dif) < .3 ){
+        force += (.3-length(dif )) * normalize( dif)* .04;
+      }*/
+
+      vert.vel += force;
+      vert.vel *= .9 + .08 * _Gooeyness;
+      vert.pos += vert.vel;
+
+      vert.id = float( vertebraeID )/_NumberTransforms;
+
+
+
+    }else{
+      vert.norm = fNorm;
+      vert.uv = fUV;
+      vert.pos = fPos;
+
+      vert.id  = 0;
+
+
+    }
+
+
+  }
+
+
+  vertBuffer[pID] = vert;
+}
